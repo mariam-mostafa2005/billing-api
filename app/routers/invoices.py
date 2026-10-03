@@ -1,7 +1,15 @@
 import hashlib
 import json
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    Header,
+    HTTPException,
+    Response,
+    status,
+)
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
@@ -21,6 +29,7 @@ from app.schemas import (
     PaymentCreate,
     PaymentOut,
 )
+from app.webhook_service import deliver, enqueue_event
 
 router = APIRouter(prefix="/invoices", tags=["invoices"])
 
@@ -120,6 +129,7 @@ def create_payment(
     invoice_id: int,
     payload: PaymentCreate,
     response: Response,
+    background_tasks: BackgroundTasks,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     db: Session = Depends(get_db),
 ):
@@ -174,8 +184,14 @@ def create_payment(
     db.add(payment)
     db.flush()  # عشان ياخد id و created_at قبل الحفظ
 
+    delivery_ids: list[int] = []
     if payload.amount == remaining:
         invoice.status = InvoiceStatus.paid
+        delivery_ids = enqueue_event(
+            db,
+            "invoice.paid",
+            {"invoice_id": invoice.id, "total_amount": invoice.total_amount},
+        )
 
     out = PaymentOut.model_validate(payment).model_dump(mode="json")
 
@@ -191,4 +207,6 @@ def create_payment(
         )
 
     db.commit()
+    for did in delivery_ids:
+        background_tasks.add_task(deliver, did)
     return out
