@@ -68,6 +68,7 @@ def get_invoice(invoice_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Invoice not found")
     return invoice
 
+
 ALLOWED_TRANSITIONS = {
     InvoiceStatus.draft: {InvoiceStatus.open, InvoiceStatus.void},
     InvoiceStatus.open: {InvoiceStatus.paid, InvoiceStatus.void},
