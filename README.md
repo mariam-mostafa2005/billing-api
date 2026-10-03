@@ -14,10 +14,20 @@ reliable event delivery.
 - **Signed webhooks** (HMAC-SHA256) with retries and exponential backoff
 - Alembic migrations, Dockerized, tested with pytest
 
+## Architecture
+
+```mermaid
+flowchart LR
+    C[Client] -->|POST /payments + Idempotency-Key| API[FastAPI]
+    API -->|"one transaction: lock invoice (FOR UPDATE), insert payment, enqueue webhook"| DB[(PostgreSQL)]
+    W[Worker] -->|poll pending deliveries| DB
+    W -->|"signed POST (HMAC-SHA256), retries with backoff"| R[Customer webhook endpoint]
+```
+
 ## Quick start
 
 ```bash
-cp .env.example .env   # or create .env (see below)
+cp .env.example .env
 docker compose up --build
 docker compose exec api alembic upgrade head
 ```
@@ -28,6 +38,20 @@ Run tests:
 
 ```bash
 docker compose exec api pytest tests -v
+```
+
+## Test results
+
+```
+tests/test_concurrency.py::test_concurrent_full_payments_only_one_succeeds PASSED
+tests/test_idempotency.py::test_same_key_same_body_returns_same_payment PASSED
+tests/test_idempotency.py::test_same_key_different_body_is_rejected PASSED
+tests/test_idempotency.py::test_concurrent_requests_with_same_key_create_one_payment PASSED
+tests/test_webhooks.py::test_signature_is_valid_for_untouched_body PASSED
+tests/test_webhooks.py::test_signature_fails_if_body_tampered PASSED
+tests/test_webhooks.py::test_signature_fails_with_wrong_secret PASSED
+tests/test_webhooks.py::test_deliver_sends_valid_signature_and_marks_delivered PASSED
+8 passed
 ```
 
 ## Design decisions
