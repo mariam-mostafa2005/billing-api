@@ -1,1 +1,7 @@
-Generic single-database configuration.
+Generic single-database configuration.## Known limitations / Future work
+
+- **Single worker only.** If multiple worker instances run concurrently,
+  two of them may pick the same pending delivery and send it twice.
+  The fix is to claim deliveries with `SELECT ... FOR UPDATE SKIP LOCKED`
+  so each worker gets a disjoint set of rows.
+- Webhook consumers should be idempotent anyway (at-least-once delivery).
