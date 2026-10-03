@@ -83,3 +83,21 @@ def deliver(delivery_id: int) -> None:
         db.commit()
     finally:
         db.close()
+
+def retry_due_deliveries() -> int:
+    """يعيد المحاولة للـ deliveries المتأخرة. بيرجّع عددها."""
+    db = SessionLocal()
+    try:
+        now = datetime.now(timezone.utc)
+        ids = db.scalars(
+            select(WebhookDelivery.id).where(
+                WebhookDelivery.status == "pending",
+                WebhookDelivery.next_attempt_at <= now,
+            )
+        ).all()
+    finally:
+        db.close()
+
+    for did in ids:
+        deliver(did)
+    return len(ids)
