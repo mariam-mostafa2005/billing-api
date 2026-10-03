@@ -6,6 +6,7 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Index,
     Integer,
     String,
     func,
@@ -74,4 +75,20 @@ class InvoiceItem(Base):
     __table_args__ = (
         CheckConstraint("quantity > 0", name="ck_item_qty_positive"),
         CheckConstraint("unit_price >= 0", name="ck_item_price_nonneg"),
+    )
+
+
+class Payment(Base):
+    __tablename__ = "payments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    invoice_id: Mapped[int] = mapped_column(ForeignKey("invoices.id"))
+    amount: Mapped[int] = mapped_column(Integer)  # بالقروش
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint("amount > 0", name="ck_payment_amount_positive"),
+        Index("ix_payments_invoice_id", "invoice_id"),
     )
