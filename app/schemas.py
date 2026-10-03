@@ -66,3 +66,17 @@ class PaymentOut(BaseModel):
     invoice_id: int
     amount: int
     created_at: datetime
+
+
+class WebhookEndpointCreate(BaseModel):
+    url: str
+
+
+class WebhookEndpointOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    url: str
+    secret: str
+    active: bool
+    created_at: datetime
