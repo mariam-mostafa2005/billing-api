@@ -50,3 +50,6 @@ class InvoiceOut(BaseModel):
     total_amount: int
     created_at: datetime
     items: list[InvoiceItemOut]
+
+class InvoiceStatusUpdate(BaseModel):
+    status: InvoiceStatus

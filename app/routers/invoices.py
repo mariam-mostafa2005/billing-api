@@ -3,8 +3,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
-from app.models import Customer, Invoice, InvoiceItem
-from app.schemas import InvoiceCreate, InvoiceOut
+from app.models import Customer, Invoice, InvoiceItem, InvoiceStatus
+from app.schemas import InvoiceCreate, InvoiceOut, InvoiceStatusUpdate
 
 router = APIRouter(prefix="/invoices", tags=["invoices"])
 
@@ -61,3 +61,34 @@ def get_invoice(invoice_id: int, db: Session = Depends(get_db)):
     if not invoice:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Invoice not found")
     return invoice
+
+ALLOWED_TRANSITIONS = {
+    InvoiceStatus.draft: {InvoiceStatus.open, InvoiceStatus.void},
+    InvoiceStatus.open: {InvoiceStatus.paid, InvoiceStatus.void},
+    InvoiceStatus.paid: set(),
+    InvoiceStatus.void: set(),
+}
+
+
+@router.patch("/{invoice_id}/status", response_model=InvoiceOut)
+def update_status(
+    invoice_id: int,
+    payload: InvoiceStatusUpdate,
+    db: Session = Depends(get_db),
+):
+    # FOR UPDATE بيقفل صف الفاتورة لحد ما الـ transaction تخلص
+    stmt = select(Invoice).where(Invoice.id == invoice_id).with_for_update()
+    invoice = db.scalars(stmt).first()
+    if not invoice:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Invoice not found")
+
+    if payload.status not in ALLOWED_TRANSITIONS[invoice.status]:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Cannot change status from {invoice.status.value} "
+            f"to {payload.status.value}",
+        )
+
+    invoice.status = payload.status
+    db.commit()
+    return load_invoice(db, invoice_id)
