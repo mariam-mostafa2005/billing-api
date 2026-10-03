@@ -6,3 +6,4 @@ alembic
 pydantic-settings
 pytest
 httpx
+email-validator

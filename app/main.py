@@ -3,8 +3,10 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.routers import customers
 
 app = FastAPI(title="Billing API")
+app.include_router(customers.router)
 
 
 @app.get("/health")
