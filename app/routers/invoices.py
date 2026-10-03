@@ -1,10 +1,16 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
-from app.models import Customer, Invoice, InvoiceItem, InvoiceStatus
-from app.schemas import InvoiceCreate, InvoiceOut, InvoiceStatusUpdate
+from app.models import Customer, Invoice, InvoiceItem, InvoiceStatus, Payment
+from app.schemas import (
+    InvoiceCreate,
+    InvoiceOut,
+    InvoiceStatusUpdate,
+    PaymentCreate,
+    PaymentOut,
+)
 
 router = APIRouter(prefix="/invoices", tags=["invoices"])
 
@@ -92,3 +98,49 @@ def update_status(
     invoice.status = payload.status
     db.commit()
     return load_invoice(db, invoice_id)
+
+
+@router.post(
+    "/{invoice_id}/payments",
+    response_model=PaymentOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_payment(
+    invoice_id: int,
+    payload: PaymentCreate,
+    db: Session = Depends(get_db),
+):
+    # قفل صف الفاتورة: أي طلب تاني على نفس الفاتورة هيستنى لحد ما نخلص
+    stmt = select(Invoice).where(Invoice.id == invoice_id).with_for_update()
+    invoice = db.scalars(stmt).first()
+    if not invoice:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Invoice not found")
+
+    if invoice.status != InvoiceStatus.open:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Cannot pay an invoice in status {invoice.status.value}",
+        )
+
+    paid_so_far = db.scalar(
+        select(func.coalesce(func.sum(Payment.amount), 0)).where(
+            Payment.invoice_id == invoice_id
+        )
+    )
+    remaining = invoice.total_amount - paid_so_far
+    if payload.amount > remaining:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Amount exceeds remaining balance ({remaining})",
+        )
+
+    payment = Payment(invoice_id=invoice_id, amount=payload.amount)
+    db.add(payment)
+
+    # لو الدفعات غطّت الإجمالي بالكامل، الفاتورة تبقى paid
+    if payload.amount == remaining:
+        invoice.status = InvoiceStatus.paid
+
+    db.commit()
+    db.refresh(payment)
+    return payment

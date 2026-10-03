@@ -53,3 +53,16 @@ class InvoiceOut(BaseModel):
 
 class InvoiceStatusUpdate(BaseModel):
     status: InvoiceStatus
+
+
+class PaymentCreate(BaseModel):
+    amount: int = Field(gt=0)  # بالقروش
+
+
+class PaymentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    invoice_id: int
+    amount: int
+    created_at: datetime
