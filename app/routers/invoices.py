@@ -1,9 +1,19 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+import hashlib
+import json
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
-from app.models import Customer, Invoice, InvoiceItem, InvoiceStatus, Payment
+from app.models import (
+    Customer,
+    IdempotencyKey,
+    Invoice,
+    InvoiceItem,
+    InvoiceStatus,
+    Payment,
+)
 from app.schemas import (
     InvoiceCreate,
     InvoiceOut,
@@ -109,13 +119,38 @@ def update_status(
 def create_payment(
     invoice_id: int,
     payload: PaymentCreate,
+    response: Response,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     db: Session = Depends(get_db),
 ):
+    endpoint = f"POST /invoices/{invoice_id}/payments"
+    request_hash = hashlib.sha256(
+        json.dumps(payload.model_dump(), sort_keys=True).encode()
+    ).hexdigest()
+
     # قفل صف الفاتورة: أي طلب تاني على نفس الفاتورة هيستنى لحد ما نخلص
     stmt = select(Invoice).where(Invoice.id == invoice_id).with_for_update()
     invoice = db.scalars(stmt).first()
     if not invoice:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Invoice not found")
+
+    # لو الـ key اتستخدم قبل كده: رجّع نفس الرد المحفوظ
+    if idempotency_key:
+        existing = db.scalars(
+            select(IdempotencyKey).where(
+                IdempotencyKey.key == idempotency_key,
+                IdempotencyKey.endpoint == endpoint,
+            )
+        ).first()
+        if existing:
+            if existing.request_hash != request_hash:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "Idempotency-Key reused with a different request body",
+                )
+            response.status_code = existing.response_status
+            response.headers["Idempotent-Replayed"] = "true"
+            return existing.response_body
 
     if invoice.status != InvoiceStatus.open:
         raise HTTPException(
@@ -137,11 +172,23 @@ def create_payment(
 
     payment = Payment(invoice_id=invoice_id, amount=payload.amount)
     db.add(payment)
+    db.flush()  # عشان ياخد id و created_at قبل الحفظ
 
-    # لو الدفعات غطّت الإجمالي بالكامل، الفاتورة تبقى paid
     if payload.amount == remaining:
         invoice.status = InvoiceStatus.paid
 
+    out = PaymentOut.model_validate(payment).model_dump(mode="json")
+
+    if idempotency_key:
+        db.add(
+            IdempotencyKey(
+                key=idempotency_key,
+                endpoint=endpoint,
+                request_hash=request_hash,
+                response_status=201,
+                response_body=out,
+            )
+        )
+
     db.commit()
-    db.refresh(payment)
-    return payment
+    return out
